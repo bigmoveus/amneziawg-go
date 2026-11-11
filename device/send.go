@@ -333,6 +333,26 @@ func (device *Device) RoutineReadFromTUN() {
 
 		// read packets
 		count, readErr = device.tun.device.Read(bufs, sizes, offset)
+
+		// Read waits for a packet with the offset of the S4 from before the
+		// wait. If S4 was set in the meantime, the packets it returns go out
+		// with the S4 of now: a receiver looks for the transport header behind
+		// that many bytes and drops a packet that has it elsewhere.
+		if current := device.paddings.transport.Load(); current != padding {
+			moved := MessageTransportHeaderSize + int(current)
+			for i := 0; i < count; i++ {
+				if sizes[i] < 1 {
+					continue
+				}
+				if moved+sizes[i] > len(bufs[i]) {
+					sizes[i] = 0
+					continue
+				}
+				copy(bufs[i][moved:], bufs[i][offset:offset+sizes[i]])
+			}
+			padding, offset = current, moved
+		}
+
 		for i := 0; i < count; i++ {
 			if sizes[i] < 1 {
 				continue
