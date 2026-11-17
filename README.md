@@ -6,6 +6,25 @@ The precursor, WireGuard, is known for its efficiency but had issues with detect
 AmneziaWG addresses this problem by employing advanced obfuscation methods, allowing its traffic to blend seamlessly with regular internet traffic.
 As a result, AmneziaWG maintains high performance while adding an extra layer of stealth, making it a superb choice for those seeking a fast and discreet VPN connection.
 
+## Differences from upstream
+
+This fork follows [amnezia-vpn/amneziawg-go](https://github.com/amnezia-vpn/amneziawg-go), currently `v3.1.20261116`, and adds the two changes below. The configuration parameters and the wire format are the same, so it works with upstream amneziawg-go and with the kernel module on the other side.
+
+### Transport packets read as handshake messages with `RandomTrailers`
+
+With `RandomTrailers` on, upstream tries the `H1`-`H3` ranges at the offsets `S1`-`S3` on every packet longer than a handshake message before it tries `H4` at `S4`, and takes the first range that matches. When `S1`-`S4` differ, a transport packet whose bytes at one of those offsets fall in `H1`, `H2` or `H3` is dropped as a broken handshake message. That is about `(|H1|+|H2|+|H3|) / 2^32` of the transport packets: about 6% with three ranges of 100,000,001 values each. Upstream avoids it by recommending the same value for `S1`-`S4` (see [Random trailers](#random-trailers-awg-31)).
+
+This fork keeps those packets when `S1`-`S4` differ:
+
+- **Receive:** a packet that reads as a handshake message, but also reads as transport and names one of this device's keypairs, is taken as transport. Handshake messages keep their classification.
+- **Send:** a transport packet that a receiver without this change would read as a handshake message gets new `S4` random bytes and a new `H4` value before it goes, at most 16 times. With `HeaderProtectionKey` set, this makes the packets readable for such a receiver. Without a key it helps only in part, so with a peer that runs upstream and no key, the same value for `S1`-`S4` remains the safe choice.
+
+### `S4` set while the TUN reader waits
+
+Packets returned by a read that started before `S4` changed are moved to the offset of the current `S4` before they are queued. Upstream `v3.1.20261116` fixes the same packet loss later, in the encryption queue, so this is no longer a difference in behaviour.
+
+The tests for both changes are in `device/awg_classify_test.go` and `device/awg_padding_test.go`.
+
 ## Usage
 
 Simply run:
